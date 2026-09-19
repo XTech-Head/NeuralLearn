@@ -107,39 +107,53 @@ async function fetchWithRetry(
   };
 }
 
-// ─── Groq ─────────────────────────────────────────────────────────────────────
+// ─── OpenRouter ────────────────────────────────────────────────────────────────
+//
+// All generation now runs through OpenRouter's free-tier models. We try a
+// short list of candidates in order and fall back to the next one if a model
+// is rate-limited, temporarily unavailable, or returns an empty response.
+// See: https://openrouter.ai/collections/free-models
+//
+// Note: OpenRouter's free router (`openrouter/free`) is included last as a
+// catch-all — it auto-selects whatever free model is currently healthy.
 
-async function callGroq(
+const OPENROUTER_MODEL_CANDIDATES = Array.from(
+  new Set(
+    [
+      process.env.OPENROUTER_MODEL,
+      "deepseek/deepseek-v4-flash-0731:free",
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "openrouter/free",
+    ].filter(Boolean)
+  )
+) as string[];
+
+async function callOpenRouter(
   systemPrompt: string,
   userPrompt: string
 ): Promise<string> {
-  const modelCandidates = Array.from(
-    new Set(
-      [
-        process.env.GROQ_MODEL,
-        "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b",
-      ].filter(Boolean)
-    )
-  ) as string[];
-
   let lastError: string | null = null;
 
-  for (const model of modelCandidates) {
+  for (const model of OPENROUTER_MODEL_CANDIDATES) {
     try {
       const res = await fetchWithRetry(
-        "https://api.groq.com/openai/v1/chat/completions",
+        "https://openrouter.ai/api/v1/chat/completions",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            // Optional but recommended by OpenRouter so usage shows up
+            // under your app on their leaderboards/dashboard.
+            "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
+            "X-Title": process.env.APP_NAME ?? "AI Course Generator",
           },
           body: JSON.stringify({
             model,
             temperature: 0.7,
 
-            // Don't automatically request 4096 tokens
+            // Don't automatically request a huge budget
             // for every tiny quiz/flashcard operation.
             max_tokens: 2500,
 
@@ -159,7 +173,7 @@ async function callGroq(
             ],
           }),
         },
-        "Groq",
+        "OpenRouter",
         model,
         2
       );
@@ -170,7 +184,7 @@ async function callGroq(
 
       if (!content) {
         throw new Error(
-          `Groq ${model} returned an empty response.`
+          `OpenRouter ${model} returned an empty response.`
         );
       }
 
@@ -185,10 +199,11 @@ async function callGroq(
           : String(error));
 
       console.warn(
-        `[AI] Groq/${model} unavailable (${providerError?.status ?? "unknown"}).`
+        `[AI] OpenRouter/${model} unavailable (${providerError?.status ?? "unknown"}).`
       );
 
-      // Don't try another model for authentication errors.
+      // Don't keep trying other models on auth/config errors — they'll
+      // all fail the same way.
       if (
         providerError?.status === 401 ||
         providerError?.status === 403
@@ -196,107 +211,13 @@ async function callGroq(
         break;
       }
 
-      // Continue to next model.
+      // Otherwise, fall through and try the next model candidate
+      // (covers 404 "model not found", 429 exhausted, 5xx, empty response).
     }
   }
 
   throw new Error(
-    lastError ?? "Groq failed without a response."
-  );
-}
-
-// ─── Gemini ───────────────────────────────────────────────────────────────────
-
-async function callGemini(
-  systemPrompt: string,
-  userPrompt: string
-): Promise<string> {
-  const modelCandidates = Array.from(
-    new Set(
-      [
-        process.env.GEMINI_MODEL,
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-      ].filter(Boolean)
-    )
-  ) as string[];
-
-  let lastError: string | null = null;
-
-  for (const model of modelCandidates) {
-    try {
-      const url =
-        `https://generativelanguage.googleapis.com/v1beta/models/` +
-        `${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
-
-      const res = await fetchWithRetry(
-        url,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            system_instruction: {
-              parts: [{ text: systemPrompt }],
-            },
-
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: userPrompt }],
-              },
-            ],
-
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2500,
-              responseMimeType: "application/json",
-            },
-          }),
-        },
-        "Gemini",
-        model,
-        2
-      );
-
-      const data = await res.json();
-
-      const text =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!text) {
-        throw new Error(
-          `Gemini ${model} returned an empty response.`
-        );
-      }
-
-      return text;
-    } catch (error) {
-      const providerError = error as ProviderError;
-
-      lastError =
-        providerError?.message ??
-        (error instanceof Error
-          ? error.message
-          : String(error));
-
-      console.warn(
-        `[AI] Gemini/${model} unavailable (${providerError?.status ?? "unknown"}).`
-      );
-
-      // Don't keep hammering a denied project/model.
-      if (
-        providerError?.status === 401 ||
-        providerError?.status === 403
-      ) {
-        continue;
-      }
-    }
-  }
-
-  throw new Error(
-    lastError ?? "Gemini failed without a response."
+    `All OpenRouter models failed.\n${lastError ?? "No error detail."}`
   );
 }
 
@@ -306,47 +227,13 @@ async function callAI(
   systemPrompt: string,
   userPrompt: string
 ): Promise<string> {
-  const errors: string[] = [];
-
-  // Primary: Groq
-  if (process.env.GROQ_API_KEY) {
-    try {
-      return await callGroq(systemPrompt, userPrompt);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      errors.push(`Groq: ${message}`);
-
-      console.warn(
-        "[AI] Groq unavailable. Falling back to Gemini."
-      );
-    }
+  if (!process.env.OPENROUTER_API_KEY) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not set. Get a free key at https://openrouter.ai/keys"
+    );
   }
 
-  // Secondary: Gemini
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      return await callGemini(systemPrompt, userPrompt);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      errors.push(`Gemini: ${message}`);
-
-      console.warn(
-        "[AI] Gemini unavailable."
-      );
-    }
-  }
-
-  throw new Error(
-    `All AI providers failed.\n${errors.join("\n")}`
-  );
+  return callOpenRouter(systemPrompt, userPrompt);
 }
 
 // ─── JSON Parsing ─────────────────────────────────────────────────────────────
@@ -550,5 +437,4 @@ Requirements:
     safeParseJSON<{ flashcards: Flashcard[] }>(raw);
 
   return parsed.flashcards;
-
 }

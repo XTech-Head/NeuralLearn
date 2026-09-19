@@ -2,7 +2,22 @@
 import React, { useState } from "react";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
+import { Download } from "lucide-react";
 import { ThemeToggle } from "./Themetoggle";
+import { Button } from "@/components/ui/button";
+
+// Direct link to the APK asset — starts the download immediately instead of
+// sending people to the GitHub release page first. If you cut a new release,
+// either update the tag/filename here or point this at
+// ".../releases/latest/download/NeuralLearn.apk" (that redirect always
+// resolves to whatever your most recent release contains).
+const MOBILE_DOWNLOAD_URL =
+  "https://github.com/XTech-Head/NeauralLearnMobile/releases/download/v1.0.0/NeuralLearn.apk";
+
+// SHA-256 of NeuralLearn.apk (v1.0.0), shown as a tooltip so anyone who
+// wants to verify the download's integrity can do so.
+const MOBILE_APK_SHA256 =
+  "bb30dee7ff7238dc3f61c388e91f10e08d04a22f65287813f68228bc36aa0d48";
 
 function Header() {
   const { isSignedIn } = useUser();
@@ -41,6 +56,22 @@ function Header() {
 
         {/* Desktop Actions */}
         <div className="hidden md:flex items-center gap-3">
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="gap-2"
+          >
+            <a
+              href={MOBILE_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`SHA-256: ${MOBILE_APK_SHA256}`}
+            >
+              <Download className="h-4 w-4" />
+              Get the App
+            </a>
+          </Button>
           <ThemeToggle />
           {isSignedIn ? (
             <UserButton afterSignOutUrl="/" />
@@ -81,7 +112,7 @@ function Header() {
       </div>
 
       {/* Mobile Dropdown Menu */}
-      <div className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${menuOpen ? "max-h-80 border-b border-border/40" : "max-h-0"}`}>
+      <div className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${menuOpen ? "max-h-96 border-b border-border/40" : "max-h-0"}`}>
         <nav className="flex flex-col px-4 py-3 gap-1 bg-background/95 backdrop-blur">
           <a
             href="#features"
@@ -97,7 +128,24 @@ function Header() {
           >
             How It Works
           </a>
-          
+
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="gap-2 mt-1 w-full justify-center"
+            onClick={() => setMenuOpen(false)}
+          >
+            <a
+              href={MOBILE_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`SHA-256: ${MOBILE_APK_SHA256}`}
+            >
+              <Download className="h-4 w-4" />
+              Get the App
+            </a>
+          </Button>
 
           {!isSignedIn && (
             <div className="flex flex-col gap-2 pt-2 mt-1 border-t border-border/40">
