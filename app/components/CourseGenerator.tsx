@@ -206,26 +206,8 @@ export default function CourseGenerator() {
                     disabled={isGenerating || isTranscribing}
                     maxLength={200}
                   />
-
-                  {/* Mic button */}
-                  <button
-                    onClick={handleMicClick}
-                    disabled={isGenerating || isTranscribing}
-                    title={isRecording ? "Stop" : "Speak"}
-                    className={`absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
-                      isRecording
-                        ? "bg-red-500 text-white shadow-lg shadow-red-500/40 scale-110"
-                        : isTranscribing
-                        ? "text-purple-400 cursor-wait"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  >
-                    {isTranscribing
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : isRecording
-                      ? <Square className="w-3 h-3 fill-current" />
-                      : <Mic className="w-4 h-4" />}
-                  </button>
+                
+                
                 </div>
 
                 <button
