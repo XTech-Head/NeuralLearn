@@ -121,10 +121,10 @@ const OPENROUTER_MODEL_CANDIDATES = Array.from(
   new Set(
     [
       process.env.OPENROUTER_MODEL,
-      "deepseek/deepseek-v4-flash-0731:free",
+      "openrouter/free",
       "nvidia/nemotron-3-super-120b-a12b:free",
       "nvidia/nemotron-3.5-lightning:free",
-      "openrouter/free",
+      "deepseek/deepseek-v4-flash-0731:free",
     ].filter(Boolean)
   )
 ) as string[];
