@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 // ".../releases/latest/download/NeuralLearn.apk" (that redirect always
 // resolves to whatever your most recent release contains).
 const MOBILE_DOWNLOAD_URL =
-  "https://github.com/XTech-Head/NeauralLearnMobile/releases/tag/v1.1.0s";
+  "https://github.com/XTech-Head/NeauralLearnMobile/releases/tag/v1.1.0";
 
 // SHA-256 of NeuralLearn.apk (v1.0.0), shown as a tooltip so anyone who
 // wants to verify the download's integrity can do so.
