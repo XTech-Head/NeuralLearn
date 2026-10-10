@@ -1,36 +1,9 @@
-import { db } from "@/config/db";
-import { usersTable } from "@/config/schema";
-import { currentUser } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
+// app/api/user/route.ts
 import { NextResponse } from "next/server";
+import { getAuthedDbUser } from "@/lib/server-auth"; // wherever the helper lives
 
 export async function POST() {
-  const clerkUser = await currentUser();
-
-  if (!clerkUser || !clerkUser.primaryEmailAddress) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const email = clerkUser.primaryEmailAddress.emailAddress;
-
-  // Check if user already exists
-  const existingUser = await db
-    .select()
-    .from(usersTable)
-    .where(eq(usersTable.email, email));
-
-  if (existingUser.length > 0) {
-    return NextResponse.json(existingUser[0]);
-  }
-
-  // Create new user
-  const newUser = await db
-    .insert(usersTable)
-    .values({
-      name: clerkUser.fullName ?? "User",
-      email,
-    })
-    .returning();
-
-  return NextResponse.json(newUser[0]);
+  const { user, error, status } = await getAuthedDbUser();
+  if (!user) return NextResponse.json({ error }, { status });
+  return NextResponse.json(user);
 }

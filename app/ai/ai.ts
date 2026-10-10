@@ -49,7 +49,13 @@ function getRetryAfterMs(res: Response): number | undefined {
 }
 
 function isRetryable(status: number) {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  return (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
 }
 
 async function fetchWithRetry(
@@ -76,8 +82,7 @@ async function fetchWithRetry(
       retryAfterMs: getRetryAfterMs(res),
     };
 
-    // Permanent authentication / permission / bad-request errors.
-    // Do NOT waste retries on these.
+    // Permanent auth / permission / bad-request errors: don't retry.
     if (!isRetryable(res.status)) {
       throw lastError;
     }
@@ -88,55 +93,86 @@ async function fetchWithRetry(
 
     const exponentialDelay = 1500 * Math.pow(2, attempt);
 
-    const delay = Math.min(
-      lastError.retryAfterMs ?? exponentialDelay,
-      30000
-    );
+    const delay = Math.min(lastError.retryAfterMs ?? exponentialDelay, 30000);
 
     console.warn(
       `[AI] ${provider}/${model} returned ${res.status}. ` +
-      `Retrying in ${Math.round(delay / 1000)}s...`
+        `Retrying in ${Math.round(delay / 1000)}s...`
     );
 
     await sleep(delay);
   }
 
-  throw lastError ?? {
-    status: 500,
-    message: `${provider}/${model} failed without a response.`,
-  };
+  throw (
+    lastError ?? {
+      status: 500,
+      message: `${provider}/${model} failed without a response.`,
+    }
+  );
 }
 
-// ─── OpenRouter ────────────────────────────────────────────────────────────────
+// ─── JSON Parsing ─────────────────────────────────────────────────────────────
 //
-// All generation now runs through OpenRouter's free-tier models. We try a
-// short list of candidates in order and fall back to the next one if a model
-// is rate-limited, temporarily unavailable, or returns an empty response.
-// See: https://openrouter.ai/collections/free-models
+// Strips <think> blocks and code fences, then extracts the outermost
+// { ... } so stray text before/after the JSON doesn't break parsing.
+
+function safeParseJSON<T>(raw: string): T {
+  const cleaned = raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/```json\s*/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+
+  if (start === -1 || end <= start) {
+    throw new Error(`AI returned no JSON: ${cleaned.slice(0, 300)}`);
+  }
+
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1)) as T;
+  } catch {
+    throw new Error(`AI returned invalid JSON: ${cleaned.slice(0, 300)}`);
+  }
+}
+
+// ─── OpenRouter ───────────────────────────────────────────────────────────────
 //
-// Note: OpenRouter's free router (`openrouter/free`) is included last as a
-// catch-all — it auto-selects whatever free model is currently healthy.
+// All generation runs through OpenRouter free-tier models. We try candidates
+// in order and fall through to the next on 429 / 404 / 5xx / empty response /
+// unparseable output.
+// See: https://openrouter.ai/models?q=free  (check IDs; free models change often)
 
 const OPENROUTER_MODEL_CANDIDATES = Array.from(
   new Set(
     [
       process.env.OPENROUTER_MODEL,
-      "openrouter/free",
       "nvidia/nemotron-3-super-120b-a12b:free",
       "nvidia/nemotron-3.5-lightning:free",
-      "deepseek/deepseek-v4-flash-0731:free",
+      "openrouter/free", // catch-all, last
     ].filter(Boolean)
   )
 ) as string[];
 
-async function callOpenRouter(
+async function callAI<T>(
   systemPrompt: string,
-  userPrompt: string
-): Promise<string> {
-  let lastError: string | null = null;
+  userPrompt: string,
+  parse: (raw: string) => T,
+  maxTokens = 2500
+): Promise<T> {
+  if (!process.env.OPENROUTER_API_KEY) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not set. Get a free key at https://openrouter.ai/keys"
+    );
+  }
+
+  let lastError = "No error detail.";
 
   for (const model of OPENROUTER_MODEL_CANDIDATES) {
     try {
+      // maxRetries = 0: on 429 move to the next model immediately
+      // instead of waiting on a model that is already exhausted.
       const res = await fetchWithRetry(
         "https://openrouter.ai/api/v1/chat/completions",
         {
@@ -144,113 +180,53 @@ async function callOpenRouter(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            // Optional but recommended by OpenRouter so usage shows up
-            // under your app on their leaderboards/dashboard.
             "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
             "X-Title": process.env.APP_NAME ?? "AI Course Generator",
           },
           body: JSON.stringify({
             model,
             temperature: 0.7,
-
-            // Don't automatically request a huge budget
-            // for every tiny quiz/flashcard operation.
-            max_tokens: 2500,
-
-            response_format: {
-              type: "json_object",
-            },
-
+            max_tokens: maxTokens,
+            // Stop reasoning tokens from eating the whole budget.
+            reasoning: { enabled: false },
             messages: [
-              {
-                role: "system",
-                content: systemPrompt,
-              },
-              {
-                role: "user",
-                content: userPrompt,
-              },
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
             ],
           }),
         },
         "OpenRouter",
         model,
-        2
+        0
       );
 
       const data = await res.json();
-
       const content = data?.choices?.[0]?.message?.content;
 
       if (!content) {
-        throw new Error(
-          `OpenRouter ${model} returned an empty response.`
-        );
+        throw new Error(`${model} returned an empty response.`);
       }
 
-      return content;
+      // Parsing happens INSIDE the loop, so a bad response
+      // falls through to the next model.
+      return parse(content);
     } catch (error) {
-      const providerError = error as ProviderError;
+      const e = error as ProviderError;
 
       lastError =
-        providerError?.message ??
-        (error instanceof Error
-          ? error.message
-          : String(error));
+        e?.message ??
+        (error instanceof Error ? error.message : String(error));
 
-      console.warn(
-        `[AI] OpenRouter/${model} unavailable (${providerError?.status ?? "unknown"}).`
-      );
+      console.warn(`[AI] ${model} failed (${e?.status ?? "parse/empty"}).`);
 
-      // Don't keep trying other models on auth/config errors — they'll
-      // all fail the same way.
-      if (
-        providerError?.status === 401 ||
-        providerError?.status === 403
-      ) {
+      // Auth/config errors will fail on every model, so stop.
+      if (e?.status === 401 || e?.status === 403) {
         break;
       }
-
-      // Otherwise, fall through and try the next model candidate
-      // (covers 404 "model not found", 429 exhausted, 5xx, empty response).
     }
   }
 
-  throw new Error(
-    `All OpenRouter models failed.\n${lastError ?? "No error detail."}`
-  );
-}
-
-// ─── Provider Orchestration ───────────────────────────────────────────────────
-
-async function callAI(
-  systemPrompt: string,
-  userPrompt: string
-): Promise<string> {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error(
-      "OPENROUTER_API_KEY is not set. Get a free key at https://openrouter.ai/keys"
-    );
-  }
-
-  return callOpenRouter(systemPrompt, userPrompt);
-}
-
-// ─── JSON Parsing ─────────────────────────────────────────────────────────────
-
-function safeParseJSON<T>(raw: string): T {
-  const cleaned = raw
-    .replace(/```json\s*/gi, "")
-    .replace(/```\s*/g, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    throw new Error(
-      `AI returned invalid JSON: ${cleaned.slice(0, 500)}`
-    );
-  }
+  throw new Error(`All OpenRouter models failed.\n${lastError}`);
 }
 
 // ─── Course Outline ───────────────────────────────────────────────────────────
@@ -262,7 +238,7 @@ export async function generateCourseOutline(
 You are an expert curriculum designer.
 
 Always respond with valid JSON only.
-Do not include markdown fences.
+Do not include markdown fences or any text outside the JSON.
 `;
 
   const user = `
@@ -293,9 +269,7 @@ Requirements:
 - youtubeSearchQuery must be specific
 `;
 
-  const raw = await callAI(system, user);
-
-  return safeParseJSON<CourseOutline>(raw);
+  return callAI(system, user, (raw) => safeParseJSON<CourseOutline>(raw));
 }
 
 // ─── Lesson Content ───────────────────────────────────────────────────────────
@@ -308,10 +282,11 @@ export async function generateLessonContent(
   const system = `
 You are an expert educator writing clear, engaging lesson content.
 
-Always respond with valid JSON only.
+Always respond with valid JSON only. No text outside the JSON.
 
 Do NOT use triple backtick code fences inside JSON strings.
 For code examples, use indentation and label them with "Example:".
+Escape newlines as \\n and double quotes as \\" inside the JSON string.
 `;
 
   const user = `
@@ -336,11 +311,19 @@ Include:
 Target length: 400-600 words.
 `;
 
-  const raw = await callAI(system, user);
-
-  const parsed = safeParseJSON<{ content: string }>(raw);
-
-  return parsed.content;
+  // Lessons are long, so give them a bigger token budget.
+  return callAI(
+    system,
+    user,
+    (raw) => {
+      const parsed = safeParseJSON<{ content: string }>(raw);
+      if (!parsed?.content || typeof parsed.content !== "string") {
+        throw new Error("Lesson JSON missing 'content'.");
+      }
+      return parsed.content;
+    },
+    4000
+  );
 }
 
 // ─── Quiz Questions ───────────────────────────────────────────────────────────
@@ -352,7 +335,7 @@ export async function generateQuizQuestions(
   const system = `
 You are an expert educational assessment designer.
 
-Always respond with valid JSON only.
+Always respond with valid JSON only. No text outside the JSON.
 `;
 
   const user = `
@@ -384,12 +367,13 @@ Requirements:
 - Questions must test understanding, not trivial wording
 `;
 
-  const raw = await callAI(system, user);
-
-  const parsed =
-    safeParseJSON<{ questions: QuizQuestion[] }>(raw);
-
-  return parsed.questions;
+  return callAI(system, user, (raw) => {
+    const parsed = safeParseJSON<{ questions: QuizQuestion[] }>(raw);
+    if (!Array.isArray(parsed?.questions) || parsed.questions.length === 0) {
+      throw new Error("Quiz JSON missing 'questions'.");
+    }
+    return parsed.questions;
+  });
 }
 
 // ─── Flashcards ───────────────────────────────────────────────────────────────
@@ -401,7 +385,7 @@ export async function generateFlashcards(
   const system = `
 You are an expert at creating educational flashcards.
 
-Always respond with valid JSON only.
+Always respond with valid JSON only. No text outside the JSON.
 `;
 
   const user = `
@@ -431,10 +415,11 @@ Requirements:
 - Keep answers to 1-2 sentences
 `;
 
-  const raw = await callAI(system, user);
-
-  const parsed =
-    safeParseJSON<{ flashcards: Flashcard[] }>(raw);
-
-  return parsed.flashcards;
+  return callAI(system, user, (raw) => {
+    const parsed = safeParseJSON<{ flashcards: Flashcard[] }>(raw);
+    if (!Array.isArray(parsed?.flashcards) || parsed.flashcards.length === 0) {
+      throw new Error("Flashcard JSON missing 'flashcards'.");
+    }
+    return parsed.flashcards;
+  });
 }
