@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#7c3aed" />
+  <title>No connection - NeuralLearn</title>
+  <style>
+    :root {
+      --bg: #f7f5fb;
+      --text: #1d1530;
+      --muted: #6b6280;
+      --primary: #7c3aed;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #120d1c;
+        --text: #f1edf9;
+        --muted: #a79fbb;
+        --primary: #9475ff;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+    }
+    main { max-width: 340px; }
+    h1 { margin: 0 0 10px; font-size: 1.6rem; letter-spacing: -0.02em; }
+    p { margin: 0; line-height: 1.55; color: var(--muted); }
+    button {
+      margin-top: 22px;
+      padding: 13px 24px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--primary);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>No connection</h1>
+    <p>NeuralLearn needs the internet to load your courses. Reconnect, then try again.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+</body>
+</html>
