@@ -12,12 +12,12 @@ import { Button } from "@/components/ui/button";
 // ".../releases/latest/download/NeuralLearn.apk" (that redirect always
 // resolves to whatever your most recent release contains).
 const MOBILE_DOWNLOAD_URL =
-  "https://github.com/XTech-Head/NeauralLearnMobile/releases/download/v1.0.0/NeuralLearn.apk";
+  "https://github.com/XTech-Head/NeauralLearnMobile/releases/tag/v1.0.0";
 
 // SHA-256 of NeuralLearn.apk (v1.0.0), shown as a tooltip so anyone who
 // wants to verify the download's integrity can do so.
 const MOBILE_APK_SHA256 =
-  "bb30dee7ff7238dc3f61c388e91f10e08d04a22f65287813f68228bc36aa0d48";
+  "885165963bf6e050f0efee4e9ce4ab734f7c9d3c15dfca20efb8cc3fa3610717";
 
 function Header() {
   const { isSignedIn } = useUser();
